@@ -3,6 +3,7 @@ from collections.abc import Iterable
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import ForeignKey
 from django.template.loader import render_to_string
 from django.utils.translation import gettext_lazy as _
 
@@ -10,7 +11,10 @@ from cms.app_base import CMSAppConfig, CMSAppExtension
 from cms.plugin_base import CMSPlugin
 from cms.plugin_pool import plugin_pool
 
-from djangocms_alias.models import AliasPlugin
+from global_cms_modal.models import ModalModel
+
+from global_cms_url_manager.fields import FilUrlPluginExtensionField
+from global_cms_url_manager.models import FilUrlPlugin, FilUrlPluginExtension
 
 from .datastructures import ExtraColumn
 from .helpers import (
@@ -25,6 +29,7 @@ class ReferencesCMSExtension(CMSAppExtension):
     def __init__(self):
         self.reference_models = self._make_default()
         self.reference_plugins = self._make_default()
+        self.reference_fields = self._make_default()
         self.list_extra_columns = []
         self.list_queryset_modifiers = []
 
@@ -51,14 +56,21 @@ class ReferencesCMSExtension(CMSAppExtension):
                 ) from e
             field = model._meta.get_field(field_name)
             related_model = field.related_model
+            field_name = field.name
             if (
+                issubclass(model, (CMSPlugin,))
+                and isinstance(field, FilUrlPluginExtensionField)
+            ):
+                print(f"related_model_cms_config:{related_model}")
+                store = self.reference_fields
+            elif (
                 issubclass(model, (CMSPlugin,))
                 and model.__name__ in plugin_pool.plugins
             ):
                 store = self.reference_plugins
             else:
                 store = self.reference_models
-            store[related_model][model].add(field.name)
+            store[related_model][model].add(field_name)
 
     def configure_list_extra_columns(self, extra_columns):
         """Registers additional columns to be displayed in the reference
@@ -130,10 +142,16 @@ def unpublish_dependencies(request, version, *args, **kwargs):
 
 class ReferencesCMSAppConfig(CMSAppConfig):
     djangocms_references_enabled = True
+    reference_fields = [
+        (ModalModel, "compliance_decline_link"),
+        (FilUrlPlugin, "url_grouper"),
+        ]
+    reference_field_map = {
+        FilUrlPluginExtension: "url_grouper",
+    }
     djangocms_versioning_enabled = getattr(
         settings, "DJANGOCMS_REFERENCES_VERSIONING_ENABLED", True
     )
-    reference_fields = [(AliasPlugin, 'alias')]
     reference_list_extra_columns = [
         (version_attr(lambda v: v.get_state_display()), _("Status")),
         (version_attr(lambda v: v.created_by), _("Author")),

@@ -9,6 +9,8 @@ from django.db.models import F, Q
 
 from cms.models import CMSPlugin
 
+from djangocms_references import cms_config
+
 
 def get_versionable_for_content(content):
     """Returns a VersionableItem for a given content object (or content model).
@@ -39,6 +41,10 @@ def get_lookup(field_name, versionable):
         return "{}__{}".format(field_name, content_name)
     return field_name
 
+def get_field_lookup(field_name, content_model):
+    target = getattr(content_model, "url_grouper")
+    return "compliance_decline_link__url_grouper"
+
 
 @lru_cache(maxsize=1)
 def get_extension():
@@ -50,7 +56,7 @@ def get_extra_columns():
     return get_extension().list_extra_columns
 
 
-def _get_reference_models(content_model, models):
+def _get_reference_models(content_model, models, target_field=None):
     """Yields (model, lookups) pairs, where model is a model that
     can contain references to content_model and lookups is a list
     of lookups used to filter that model's objects against
@@ -72,15 +78,22 @@ def _get_reference_models(content_model, models):
     generate (model, lookups) pairs, in this case:
     [(AliasPlugin, 'alias__aliascontent')]
     """
+    from global_cms_modal.models import ModalModel
+    from global_cms_url_manager.models import FilUrlPluginExtension
     versionable = get_versionable_for_content(content_model)
     if versionable:
         target_model = versionable.grouper_model
     else:
         target_model = content_model
+    if target_field:
+        target_model = cms_config.ReferencesCMSAppConfig.reference_field_map[content_model]
     for model, fields in models[target_model].items():
         lookups = []
         for field in fields:
-            lookups.append(get_lookup(field, versionable))
+            if target_field:
+                lookups.append(get_field_lookup(field, target_model))
+            else:
+                lookups.append(get_lookup(field, versionable))
         yield model, lookups
 
 
@@ -98,6 +111,18 @@ def get_reference_plugins(content_model):
     """
     extension = get_extension()
     yield from _get_reference_models(content_model, extension.reference_plugins)
+
+
+def get_reference_fields(content_model):
+    """Yields (model, lookups) tuples, where model
+    is a model with a field, that can contain references to content_model.
+    """
+    from global_cms_modal.models import ModalModel
+    from global_cms_url_manager.models import FilUrlPluginExtension
+    extension = get_extension()
+    target_model = FilUrlPluginExtension
+
+    yield from _get_reference_models(content_model, extension.reference_fields, target_model)
 
 
 def get_filters(content, lookups):
@@ -159,7 +184,7 @@ def contenttype_values_queryset(queryset):
     return (
         queryset.order_by()  # need to clear ordering,
         # as ordering clauses are not allowed in subqueries
-        .annotate(
+        .annotate( 
             content_type=F("placeholder__content_type"),
             object_id=F("placeholder__object_id"),
         ).values("content_type", "object_id")
@@ -198,6 +223,34 @@ def get_reference_objects_from_plugins(content):
     # we want to end up with a list of source object (CMSPlugin.placeholder.source)
     # querysets
     sources = convert_plugin_querysets_to_sources(querysets)
+    for ctype_id, group_sources in groupby(sources, itemgetter("content_type")):
+        content_type = ContentType.objects.get_for_id(ctype_id)
+        yield content_type.get_all_objects_for_this_type(
+            pk__in=[source["object_id"] for source in group_sources]
+        )
+
+
+def get_reference_objects_from_fields(content):
+    """Yields querysets of models that are related to provided
+    content object through plugins.
+
+    :param content: Content object
+    """
+    print(f"get_reference_objects_from_fields = {content}")
+    content = content.url_grouper
+    querysets = [
+        qs.filter(
+            # NOTE: This filters out static placeholders
+            Q(placeholder__content_type__isnull=False)
+        )
+        for qs in _get_reference_objects(content, get_reference_fields)
+    ]
+    # `querysets` contains a list of plugin querysets,
+    # we want to end up with a list of source object (CMSPlugin.placeholder.source)
+    # querysets
+    print(querysets)
+    sources = convert_plugin_querysets_to_sources(querysets)
+    print(f"Sources: {sources}")
     for ctype_id, group_sources in groupby(sources, itemgetter("content_type")):
         content_type = ContentType.objects.get_for_id(ctype_id)
         yield content_type.get_all_objects_for_this_type(
@@ -273,7 +326,8 @@ def get_all_reference_objects(content, draft_and_published=False):
     if draft_and_published:
         postprocess = partial(map, filter_only_draft_and_published)
     querysets = combine_querysets_of_same_models(
-        get_reference_objects(content), get_reference_objects_from_plugins(content)
+        get_reference_objects(content), get_reference_objects_from_plugins(content),
+        get_reference_objects_from_fields(content),
     )
     if postprocess:
         querysets = postprocess(querysets)
