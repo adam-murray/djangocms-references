@@ -3,6 +3,7 @@ from django.urls import reverse
 
 from cms.api import add_plugin, create_page, create_title
 from cms.test_utils.testcases import CMSTestCase
+from cms.toolbar.utils import get_object_preview_url
 
 from djangocms_alias.models import Alias as AliasModel, AliasContent, Category
 from djangocms_alias.utils import is_versioning_enabled
@@ -10,7 +11,6 @@ from djangocms_alias.utils import is_versioning_enabled
 from djangocms_references.test_utils.factories import PollContentFactory
 from djangocms_references.test_utils.nested_references_app.models import (
     NestedPoll,
-    DeeplyNestedPoll,
 )
 
 
@@ -74,7 +74,6 @@ class NestedAppIntegrationTestCase(CMSTestCase):
         poll_content = PollContentFactory()
         poll = poll_content.poll
         nested_poll = NestedPoll.objects.create(poll=poll)
-        deeply_nested_poll = DeeplyNestedPoll.objects.create(nested_poll=nested_poll)
 
         user = self.get_superuser()
         kwargs = {}
@@ -99,7 +98,7 @@ class NestedAppIntegrationTestCase(CMSTestCase):
             placeholder,
             "DeeplyNestedPollPlugin",
             language="en",
-            deeply_nested_poll=deeply_nested_poll,
+            nested_poll=nested_poll,
         )
 
         poll_content_type = ContentType.objects.get(app_label="polls", model="poll")
@@ -112,3 +111,6 @@ class NestedAppIntegrationTestCase(CMSTestCase):
             response = self.client.get(references_endpoint)
 
         self.assertContains(response, poll_content)
+        self.assertContains(response, "pagecontent")
+        self.assertContains(response, get_object_preview_url(page_content))
+        self.assertContains(response, page_content.versions.first().state)

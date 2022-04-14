@@ -13,10 +13,6 @@ class NestedPollPlugin(CMSPlugin):
     nested_poll = models.ForeignKey(NestedPoll, on_delete=models.CASCADE)
 
 
-class DeeplyNestedPoll(models.Model):
-    nested_poll = models.ForeignKey(NestedPoll, on_delete=models.CASCADE)
-
-
 class DeeplyNestedPollPlugin(CMSPlugin):
     name = models.CharField(max_length=255)
-    deeply_nested_poll = models.ForeignKey(DeeplyNestedPoll, on_delete=models.CASCADE)
+    nested_poll = models.ForeignKey(NestedPoll, on_delete=models.CASCADE)
